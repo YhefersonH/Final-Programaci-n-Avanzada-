@@ -1,0 +1,23 @@
+# Credenciales: NUNCA dentro de la imagen
+.env
+.env.*
+Credenciales*
+
+# Control de versiones
+.git
+.gitignore
+
+# Notebooks y pruebas (no se necesitan en producción)
+notebooks/
+scripts/
+pruebas.http
+.devcontainer/
+
+# Cachés y entornos de Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Documentación
+README.md

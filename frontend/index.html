@@ -3,60 +3,274 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pronóstico</title>
-<!--
-  ESQUELETO DEL FRONTEND
-  ======================
-  Esta página ya funciona: pide el pronóstico a la API y lo muestra en una
-  tabla sin formato. Tu trabajo es convertirla en una interfaz de verdad.
-
-  Requisitos mínimos (ver README, Fase 2):
-    1. Una gráfica con el histórico, el pronóstico y el intervalo de confianza.
-    2. Las horas en hora de Colombia (la API las entrega en UTC, con "Z").
-    3. Al menos un indicador destacado (p.ej. valor de la próxima hora,
-       máximo esperado, hora del último dato).
-    4. Controles para elegir cuántas horas pronosticar.
-    5. Un mensaje claro cuando la API responde con error.
-
-  Puedes usar cualquier librería de gráficas cargada desde un CDN
-  (Chart.js, Plotly, ECharts...) y poner archivos .css o .js en esta misma
-  carpeta: se sirven en /static/<nombre>.
-
-  Endpoints disponibles (pruébalos en /docs):
-    GET /api/prediccion?horas=12&historia=48&confianza=0.95
-    GET /api/historico?horas=48
-    GET /api/modelo
-    GET /api/salud
--->
+<title>Pronóstico de consumo eléctrico</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f4f6fb; --card: #ffffff; --texto: #1f2937; --suave: #6b7280;
+    --azul: #2563eb; --naranja: #f97316; --borde: #e5e7eb; --error: #b91c1c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--texto); }
+  header { background: linear-gradient(135deg, #1e3a8a, #2563eb); color: #fff; padding: 22px 24px; }
+  header h1 { margin: 0 0 4px; font-size: 1.5rem; }
+  header p { margin: 0; opacity: .85; font-size: .95rem; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+  .card { background: var(--card); border: 1px solid var(--borde); border-radius: 12px;
+          padding: 16px 18px; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  .controles { display: flex; flex-wrap: wrap; gap: 18px 28px; align-items: flex-end; margin-bottom: 16px; }
+  .campo { display: flex; flex-direction: column; gap: 6px; font-size: .85rem; color: var(--suave); }
+  .campo strong { color: var(--texto); font-size: 1rem; }
+  input[type=range] { width: 220px; accent-color: var(--azul); }
+  select, button { font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--borde); background: #fff; }
+  button { cursor: pointer; }
+  button.primario { background: var(--azul); color: #fff; border-color: var(--azul); font-weight: 600; }
+  button.rapido.activo { background: #dbeafe; border-color: var(--azul); color: #1e40af; }
+  .rapidos { display: flex; gap: 6px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 16px; }
+  .kpi .etiqueta { font-size: .8rem; color: var(--suave); text-transform: uppercase; letter-spacing: .04em; }
+  .kpi .valor { font-size: 1.9rem; font-weight: 700; margin: 4px 0 2px; }
+  .kpi .detalle { font-size: .85rem; color: var(--suave); }
+  .kpi.destacado { border-color: var(--azul); background: #eff6ff; }
+  .kpi.destacado .valor { color: var(--azul); }
+  .grafica { height: 420px; position: relative; }
+  #error { display: none; background: #fef2f2; color: var(--error); border: 1px solid #fecaca;
+           border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; font-weight: 500; }
+  #estado { color: var(--suave); font-size: .9rem; margin: 10px 2px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; margin-top: 8px; }
+  th, td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--borde); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--suave); font-weight: 600; }
+  .tabla-wrap { max-height: 280px; overflow: auto; margin-top: 16px; }
+  .cargando { opacity: .55; pointer-events: none; }
+</style>
 </head>
 <body>
-  <h1>Pronóstico</h1>
-  <p id="estado">Consultando la API…</p>
-  <table border="1" cellpadding="4">
-    <thead><tr><th>tiempo (UTC)</th><th>prediccion</th><th>limite_inferior</th><th>limite_superior</th></tr></thead>
-    <tbody id="filas"></tbody>
-  </table>
+<header>
+  <h1>⚡ Pronóstico de consumo eléctrico</h1>
+  <p id="subtitulo">Modelo SARIMA · datos en tiempo real desde InfluxDB · horas de Colombia (UTC−5)</p>
+</header>
+
+<main>
+  <div id="error" role="alert"></div>
+
+  <section class="card controles" id="panel">
+    <div class="campo">
+      <span>Horas a pronosticar: <strong id="lblHoras">12</strong></span>
+      <input type="range" id="horas" min="1" max="72" value="12">
+    </div>
+    <div class="campo">
+      <span>Atajos</span>
+      <div class="rapidos" id="rapidos">
+        <button class="rapido" data-h="6">6 h</button>
+        <button class="rapido activo" data-h="12">12 h</button>
+        <button class="rapido" data-h="24">24 h</button>
+        <button class="rapido" data-h="48">48 h</button>
+      </div>
+    </div>
+    <div class="campo">
+      <span>Historia a mostrar</span>
+      <select id="historia">
+        <option value="24">Últimas 24 h</option>
+        <option value="48" selected>Últimas 48 h</option>
+        <option value="96">Últimas 96 h</option>
+        <option value="168">Última semana</option>
+      </select>
+    </div>
+    <div class="campo">
+      <span>Confianza del intervalo</span>
+      <select id="confianza">
+        <option value="0.90">90 %</option>
+        <option value="0.95" selected>95 %</option>
+        <option value="0.99">99 %</option>
+      </select>
+    </div>
+    <button class="primario" id="btn">Actualizar</button>
+  </section>
+
+  <section class="kpis" id="kpis">
+    <div class="card kpi destacado">
+      <div class="etiqueta">Próxima hora</div>
+      <div class="valor" id="kProxima">—</div>
+      <div class="detalle" id="kProximaHora">—</div>
+    </div>
+    <div class="card kpi">
+      <div class="etiqueta">Máximo esperado</div>
+      <div class="valor" id="kMax">—</div>
+      <div class="detalle" id="kMaxHora">—</div>
+    </div>
+    <div class="card kpi">
+      <div class="etiqueta">Promedio pronosticado</div>
+      <div class="valor" id="kProm">—</div>
+      <div class="detalle" id="kPromDet">—</div>
+    </div>
+    <div class="card kpi">
+      <div class="etiqueta">Último dato real</div>
+      <div class="valor" id="kUltimo" style="font-size:1.35rem">—</div>
+      <div class="detalle" id="kRellenadas">—</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="grafica"><canvas id="grafica"></canvas></div>
+    <p id="estado">Consultando la API…</p>
+  </section>
+
+  <section class="card tabla-wrap" style="margin-top:16px">
+    <table>
+      <thead><tr><th>Hora (Colombia)</th><th>Pronóstico</th><th>Límite inferior</th><th>Límite superior</th></tr></thead>
+      <tbody id="filas"></tbody>
+    </table>
+  </section>
+</main>
 
 <script>
+const TZ = "America/Bogota";
+const fmtHora = new Intl.DateTimeFormat("es-CO", { timeZone: TZ, day: "2-digit", month: "short",
+  hour: "2-digit", minute: "2-digit", hour12: false });
+const fmtCorta = new Intl.DateTimeFormat("es-CO", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false });
+const fmtDia = new Intl.DateTimeFormat("es-CO", { timeZone: TZ, day: "2-digit", month: "short" });
+const fmtNum = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 });
+
+const $ = (id) => document.getElementById(id);
+let grafica = null;
+let temporizador = null;
+let unidad = "";
+
+// "2026-11-13T15:00:00Z" -> Date (UTC real); luego se muestra en hora de Colombia
+const aFecha = (iso) => new Date(iso);
+const horaCO = (iso) => fmtHora.format(aFecha(iso)).replace(",", "");
+const etiqueta = (iso) => `${fmtDia.format(aFecha(iso))} ${fmtCorta.format(aFecha(iso))}`;
+const num = (v) => fmtNum.format(v) + (unidad ? " " + unidad : "");
+
+function mostrarError(mensaje) {
+  const caja = $("error");
+  caja.textContent = "⚠️ " + mensaje;
+  caja.style.display = "block";
+}
+function ocultarError() { $("error").style.display = "none"; }
+
+function textoError(datos, status) {
+  const d = datos && datos.detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) return d.map(e => e.msg).join(" · ");
+  return `La API respondió con error ${status}.`;
+}
+
 async function cargar() {
-  const estado = document.getElementById("estado");
+  const horas = $("horas").value, historia = $("historia").value, confianza = $("confianza").value;
+  $("panel").classList.add("cargando");
+  $("estado").textContent = "Consultando la API…";
+  ocultarError();
   try {
-    const respuesta = await fetch("/api/prediccion?horas=12&historia=48");
-    const datos = await respuesta.json();
-    if (!respuesta.ok) throw new Error(datos.detail);
-
-    // datos.historico  -> [{tiempo, valor}, ...]            (horas pasadas)
-    // datos.prediccion -> [{tiempo, prediccion, limite_inferior, limite_superior}, ...]
-    console.log(datos);   // abre la consola del navegador (F12) para explorarlo
-
-    document.getElementById("filas").innerHTML = datos.prediccion.map(p =>
-      `<tr><td>${p.tiempo}</td><td>${p.prediccion}</td><td>${p.limite_inferior}</td><td>${p.limite_superior}</td></tr>`
-    ).join("");
-    estado.textContent = `Último dato real: ${datos.ultima_observacion}`;
-  } catch (error) {
-    estado.textContent = "Error: " + error.message;
+    const r = await fetch(`/api/prediccion?horas=${horas}&historia=${historia}&confianza=${confianza}`);
+    let datos = null;
+    try { datos = await r.json(); } catch (_) {}
+    if (!r.ok) throw new Error(textoError(datos, r.status));
+    pintar(datos, Math.round(confianza * 100));
+  } catch (e) {
+    const msg = (e instanceof TypeError)
+      ? "No se pudo conectar con la API. Verifica que el servidor esté corriendo."
+      : e.message;
+    mostrarError(msg);
+    $("estado").textContent = "No se pudo actualizar el pronóstico.";
+  } finally {
+    $("panel").classList.remove("cargando");
   }
 }
+
+function pintar(d, pct) {
+  const p = d.prediccion, h = d.historico;
+
+  // --- Indicadores
+  const proxima = p[0];
+  const maximo = p.reduce((a, b) => (b.prediccion > a.prediccion ? b : a), p[0]);
+  const prom = p.reduce((s, x) => s + x.prediccion, 0) / p.length;
+  $("kProxima").textContent = num(proxima.prediccion);
+  $("kProximaHora").textContent = `${horaCO(proxima.tiempo)} · IC ${pct}%: ${fmtNum.format(proxima.limite_inferior)} – ${fmtNum.format(proxima.limite_superior)}`;
+  $("kMax").textContent = num(maximo.prediccion);
+  $("kMaxHora").textContent = `a las ${horaCO(maximo.tiempo)}`;
+  $("kProm").textContent = num(prom);
+  $("kPromDet").textContent = `en las próximas ${p.length} h`;
+  $("kUltimo").textContent = horaCO(d.ultima_observacion);
+  $("kRellenadas").textContent = d.horas_rellenadas > 0
+    ? `⚠️ ${d.horas_rellenadas} h sin dato fueron rellenadas`
+    : "Sin horas rellenadas (datos completos)";
+
+  // --- Gráfica: etiquetas = histórico + pronóstico, todas en hora de Colombia
+  const etiquetas = [...h.map(x => etiqueta(x.tiempo)), ...p.map(x => etiqueta(x.tiempo))];
+  const nh = h.length;
+  const vacio = (n) => Array(n).fill(null);
+  const valHist = [...h.map(x => x.valor), ...vacio(p.length)];
+  // la línea del pronóstico arranca en el último dato real para que se vea continua
+  const valPred = [...vacio(Math.max(nh - 1, 0)), nh ? h[nh - 1].valor : null, ...p.map(x => x.prediccion)];
+  const valInf = [...vacio(nh), ...p.map(x => x.limite_inferior)];
+  const valSup = [...vacio(nh), ...p.map(x => x.limite_superior)];
+
+  const datasets = [
+    { label: "Histórico", data: valHist, borderColor: "#2563eb", backgroundColor: "#2563eb",
+      borderWidth: 2, pointRadius: 0, tension: .25 },
+    { label: "Pronóstico", data: valPred.slice(0, etiquetas.length), borderColor: "#f97316", backgroundColor: "#f97316",
+      borderWidth: 2.5, borderDash: [6, 4], pointRadius: 0, tension: .25 },
+    { label: `Límite inferior (${pct}%)`, data: valInf, borderColor: "rgba(249,115,22,.0)",
+      pointRadius: 0, fill: false, tension: .25 },
+    { label: `Intervalo de confianza ${pct}%`, data: valSup, borderColor: "rgba(249,115,22,.35)", borderWidth: 1,
+      backgroundColor: "rgba(249,115,22,.18)", pointRadius: 0, fill: "-1", tension: .25 },
+  ];
+
+  if (grafica) grafica.destroy();
+  grafica = new Chart($("grafica"), {
+    type: "line",
+    data: { labels: etiquetas, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { labels: { filter: (item) => !item.text.startsWith("Límite inferior") } },
+        title: { display: true, text: "Histórico, pronóstico e intervalo de confianza (hora de Colombia)" },
+        tooltip: { callbacks: { label: (c) => c.raw == null ? null : `${c.dataset.label}: ${fmtNum.format(c.raw)}${unidad ? " " + unidad : ""}` } },
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 12, maxRotation: 0 } },
+        y: { title: { display: true, text: unidad ? `Consumo (${unidad})` : "Consumo" } },
+      },
+    },
+  });
+
+  // --- Tabla
+  $("filas").innerHTML = p.map(x =>
+    `<tr><td>${horaCO(x.tiempo)}</td><td><strong>${fmtNum.format(x.prediccion)}</strong></td>` +
+    `<td>${fmtNum.format(x.limite_inferior)}</td><td>${fmtNum.format(x.limite_superior)}</td></tr>`).join("");
+
+  $("estado").textContent = `Actualizado · último dato real: ${horaCO(d.ultima_observacion)} (hora de Colombia) · ` +
+    `${d.horas_contexto_usadas} h de contexto usadas por el modelo`;
+}
+
+async function datosModelo() {
+  try {
+    const s = await (await fetch("/api/salud")).json();
+    if (s.measurement && s.field) {
+      $("subtitulo").textContent = `Serie ${s.measurement}/${s.field} · modelo SARIMA · horas de Colombia (UTC−5)`;
+    }
+  } catch (_) { /* no es crítico */ }
+}
+
+function programar() { clearTimeout(temporizador); temporizador = setTimeout(cargar, 350); }
+
+$("horas").addEventListener("input", () => {
+  $("lblHoras").textContent = $("horas").value;
+  document.querySelectorAll(".rapido").forEach(b => b.classList.toggle("activo", b.dataset.h === $("horas").value));
+  programar();
+});
+document.querySelectorAll(".rapido").forEach(b => b.addEventListener("click", () => {
+  $("horas").value = b.dataset.h;
+  $("horas").dispatchEvent(new Event("input"));
+}));
+$("historia").addEventListener("change", cargar);
+$("confianza").addEventListener("change", cargar);
+$("btn").addEventListener("click", cargar);
+
+datosModelo();
 cargar();
 </script>
 </body>
