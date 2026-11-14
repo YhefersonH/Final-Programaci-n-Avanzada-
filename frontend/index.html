@@ -53,6 +53,9 @@
              -webkit-background-clip: text; background-clip: text; color: transparent; }
   .lead { margin: 18px auto 0; max-width: 620px; color: var(--sub); font-size: 1.1rem; line-height: 1.5; }
 
+  .autor { margin: 18px 0 0; font-size: .85rem; color: var(--sub); letter-spacing: .02em; }
+  .autor .nombre { color: var(--txt); font-weight: 600; }
+
   .card { background: var(--card); border-radius: 22px; padding: 22px 24px; box-shadow: var(--shadow); }
 
   /* ---------- controles ---------- */
@@ -137,6 +140,7 @@
     <p class="eyebrow" id="eyebrow">Pronóstico SARIMA</p>
     <h1>Consumo eléctrico,<br><span class="grad">una hora a la vez.</span></h1>
     <p class="lead">Modelo estadístico sobre datos en vivo de InfluxDB. Todas las horas se muestran en hora de Colombia (UTC−5).</p>
+    <p class="autor">Proyecto final · <span class="nombre"></span></p>
   </section>
 
   <div id="error" role="alert">
@@ -212,10 +216,13 @@
     </div>
   </details>
 
-  <footer>Computación Avanzada · SARIMA + InfluxDB + FastAPI + Docker</footer>
+  <footer><span class="nombre" style="font-weight:600"></span> · Computación Avanzada · Institución Universitaria Pascual Bravo<br>SARIMA + InfluxDB + FastAPI + Docker</footer>
 </main>
 
 <script>
+const AUTOR = "Yheferson Stiven Henao Martinez";   
+document.querySelectorAll(".nombre").forEach(e => e.textContent = AUTOR);
+
 const TZ = "America/Bogota";
 const fmtHora = new Intl.DateTimeFormat("es-CO", { timeZone: TZ, day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
 const fmtCorta = new Intl.DateTimeFormat("es-CO", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false });
